@@ -1,4 +1,4 @@
-module github.com/tannevaled/notify
+module github.com/go-macos/notify
 
 go 1.26.4
 

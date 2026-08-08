@@ -1,8 +1,8 @@
 # notify
 
-[![CI](https://github.com/tannevaled/notify/actions/workflows/ci.yml/badge.svg)](https://github.com/tannevaled/notify/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/tannevaled/notify.svg)](https://pkg.go.dev/github.com/tannevaled/notify)
-[![Go Report Card](https://goreportcard.com/badge/github.com/tannevaled/notify)](https://goreportcard.com/report/github.com/tannevaled/notify)
+[![CI](https://github.com/go-macos/notify/actions/workflows/ci.yml/badge.svg)](https://github.com/go-macos/notify/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/go-macos/notify.svg)](https://pkg.go.dev/github.com/go-macos/notify)
+[![Go Report Card](https://goreportcard.com/badge/github.com/go-macos/notify)](https://goreportcard.com/report/github.com/go-macos/notify)
 [![License: BSD-3-Clause](https://img.shields.io/badge/License-BSD--3--Clause-blue.svg)](LICENSE)
 
 Pure-Go (`CGO_ENABLED=0`) interop with the macOS notification and event-bus

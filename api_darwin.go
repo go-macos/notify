@@ -114,7 +114,7 @@ var (
 	runnerClassErr  error
 )
 
-func registerRunnerClass() (objc.Class, error) {
+func doRegisterRunnerClass() (objc.Class, error) {
 	runnerClassOnce.Do(func() {
 		runnerClass, runnerClassErr = objc.RegisterClass(
 			"GoNotifyRunner", objc.GetClass("NSObject"), nil, nil,
@@ -129,6 +129,10 @@ func registerRunnerClass() (objc.Class, error) {
 	})
 	return runnerClass, runnerClassErr
 }
+
+// registerRunnerClass is a seam (a var) so Run's class-registration failure
+// branch is testable.
+var registerRunnerClass = doRegisterRunnerClass
 
 // submit runs fn on the Run thread and blocks until it completes. It reports
 // ErrNotRunning if Run is not active.
@@ -359,10 +363,6 @@ func PostUserNotification(title, subtitle, body string) error {
 	if err := loadFrameworks(); err != nil {
 		return err
 	}
-	center := class("NSUserNotificationCenter").Send(sel("defaultUserNotificationCenter"))
-	if center == 0 {
-		return ErrNoUserCenter
-	}
 	n := class("NSUserNotification").Send(sel("alloc")).Send(sel("init"))
 	n.Send(sel("setTitle:"), nsString(title))
 	if subtitle != "" {
@@ -371,6 +371,21 @@ func PostUserNotification(title, subtitle, body string) error {
 	if body != "" {
 		n.Send(sel("setInformativeText:"), nsString(body))
 	}
-	center.Send(sel("deliverNotification:"), n)
+	center := userCenterLookup()
+	if center == 0 {
+		return ErrNoUserCenter
+	}
+	userCenterDeliver(center, n)
 	return nil
+}
+
+// userCenterLookup and userCenterDeliver are seams over the deprecated
+// NSUserNotificationCenter, so the delivery path (unreachable on a bare CLI
+// binary, where the center is nil) is testable via fake-injection.
+var userCenterLookup = func() objc.ID {
+	return class("NSUserNotificationCenter").Send(sel("defaultUserNotificationCenter"))
+}
+
+var userCenterDeliver = func(center, note objc.ID) {
+	center.Send(sel("deliverNotification:"), note)
 }

@@ -48,26 +48,37 @@ var (
 	frameworksErr  error
 )
 
-// loadFrameworks dlopens Foundation and libSystem and binds the notify(3)
-// symbols. Safe to call repeatedly; the work happens once.
-func loadFrameworks() error {
-	frameworksOnce.Do(func() {
-		if _, err := purego.Dlopen(
-			"/System/Library/Frameworks/Foundation.framework/Foundation",
-			purego.RTLD_GLOBAL|purego.RTLD_NOW); err != nil {
-			frameworksErr = fmt.Errorf("notify: dlopen Foundation: %w", err)
-			return
-		}
-		sys, err := purego.Dlopen("/usr/lib/libSystem.B.dylib", purego.RTLD_GLOBAL|purego.RTLD_NOW)
-		if err != nil {
-			frameworksErr = fmt.Errorf("notify: dlopen libSystem: %w", err)
-			return
-		}
-		purego.RegisterLibFunc(&cNotifyRegisterCheck, sys, "notify_register_check")
-		purego.RegisterLibFunc(&cNotifyCheck, sys, "notify_check")
-		purego.RegisterLibFunc(&cNotifyPost, sys, "notify_post")
-		purego.RegisterLibFunc(&cNotifyCancel, sys, "notify_cancel")
-	})
+// dlopenFn is a seam over purego.Dlopen so the dlopen-failure branches in
+// doLoadFrameworks are reachable from tests (fake-injection).
+var dlopenFn = purego.Dlopen
+
+const (
+	foundationPath = "/System/Library/Frameworks/Foundation.framework/Foundation"
+	libSystemPath  = "/usr/lib/libSystem.B.dylib"
+)
+
+// doLoadFrameworks dlopens Foundation and libSystem and binds the notify(3)
+// symbols. It runs exactly once, driven by loadFrameworks.
+func doLoadFrameworks() error {
+	if _, err := dlopenFn(foundationPath, purego.RTLD_GLOBAL|purego.RTLD_NOW); err != nil {
+		return fmt.Errorf("notify: dlopen Foundation: %w", err)
+	}
+	sys, err := dlopenFn(libSystemPath, purego.RTLD_GLOBAL|purego.RTLD_NOW)
+	if err != nil {
+		return fmt.Errorf("notify: dlopen libSystem: %w", err)
+	}
+	purego.RegisterLibFunc(&cNotifyRegisterCheck, sys, "notify_register_check")
+	purego.RegisterLibFunc(&cNotifyCheck, sys, "notify_check")
+	purego.RegisterLibFunc(&cNotifyPost, sys, "notify_post")
+	purego.RegisterLibFunc(&cNotifyCancel, sys, "notify_cancel")
+	return nil
+}
+
+// loadFrameworks is a package-level var (a seam) so every caller's
+// "if err := loadFrameworks(); err != nil" branch is testable by swapping it to
+// return an error. Safe to call repeatedly; the real work happens once.
+var loadFrameworks = func() error {
+	frameworksOnce.Do(func() { frameworksErr = doLoadFrameworks() })
 	return frameworksErr
 }
 
@@ -78,6 +89,14 @@ func class(name string) objc.ID { return objc.ID(objc.GetClass(name)) }
 // nsString builds an autoreleased NSString from a Go string.
 func nsString(s string) objc.ID {
 	return class("NSString").Send(sel("stringWithUTF8String:"), s)
+}
+
+// objcGetCString fills buf with the NSString's UTF-8 bytes and reports success.
+// A seam over -getCString:maxLength:encoding: so goString's failure branch is
+// reachable from tests (the real call effectively never fails here, since buf
+// is sized from -lengthOfBytesUsingEncoding:).
+var objcGetCString = func(id objc.ID, buf []byte) bool {
+	return id.Send(sel("getCString:maxLength:encoding:"), unsafe.Pointer(&buf[0]), len(buf), nsUTF8Encoding) != 0
 }
 
 // goString copies an NSString's UTF-8 bytes into a Go-owned buffer. Returns ""
@@ -91,7 +110,7 @@ func goString(id objc.ID) string {
 		return ""
 	}
 	buf := make([]byte, n+1)
-	if id.Send(sel("getCString:maxLength:encoding:"), unsafe.Pointer(&buf[0]), len(buf), nsUTF8Encoding) == 0 {
+	if !objcGetCString(id, buf) {
 		return ""
 	}
 	return string(buf[:n])

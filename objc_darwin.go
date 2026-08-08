@@ -2,23 +2,21 @@
 
 package notify
 
-// Shared purego/objc plumbing, kept intentionally identical in idiom to the
-// rest of the fleet's CGO=0 macOS code (go-widgets/tray, go-news-reader window,
-// go-reddit webview): dlopen the frameworks once, resolve selectors and classes
-// through the Objective-C runtime, and read NSStrings via
-// getCString:maxLength:encoding: (never a raw UTF8String pointer deref, which
-// trips go vet's unsafeptr check).
+// Darwin-specific plumbing. The generic Objective-C runtime bridging —
+// selector/class lookup, NSString<->Go conversion and the NSDictionary
+// helpers — now lives in the shared github.com/go-macos/objc library (this
+// package was its reference implementation); the thin wrappers below adapt it
+// to the local spelling so the rest of the package reads unchanged. What
+// remains genuinely notify-specific stays here: the notify(3) C functions and
+// the one-time framework/dylib load that binds them.
 
 import (
 	"fmt"
 	"sync"
-	"unsafe"
 
 	"github.com/ebitengine/purego"
-	"github.com/ebitengine/purego/objc"
+	objc "github.com/go-macos/objc"
 )
-
-const nsUTF8Encoding = 4 // NSUTF8StringEncoding
 
 // notify(3) status: NOTIFY_STATUS_OK.
 const notifyStatusOK = 0
@@ -52,15 +50,13 @@ var (
 // doLoadFrameworks are reachable from tests (fake-injection).
 var dlopenFn = purego.Dlopen
 
-const (
-	foundationPath = "/System/Library/Frameworks/Foundation.framework/Foundation"
-	libSystemPath  = "/usr/lib/libSystem.B.dylib"
-)
+const libSystemPath = "/usr/lib/libSystem.B.dylib"
 
-// doLoadFrameworks dlopens Foundation and libSystem and binds the notify(3)
-// symbols. It runs exactly once, driven by loadFrameworks.
+// doLoadFrameworks dlopens Foundation (for the Objective-C classes the shared
+// objc helpers reach) and libSystem, and binds the notify(3) symbols. It runs
+// exactly once, driven by loadFrameworks.
 func doLoadFrameworks() error {
-	if _, err := dlopenFn(foundationPath, purego.RTLD_GLOBAL|purego.RTLD_NOW); err != nil {
+	if _, err := dlopenFn(objc.Foundation, purego.RTLD_GLOBAL|purego.RTLD_NOW); err != nil {
 		return fmt.Errorf("notify: dlopen Foundation: %w", err)
 	}
 	sys, err := dlopenFn(libSystemPath, purego.RTLD_GLOBAL|purego.RTLD_NOW)
@@ -82,75 +78,28 @@ var loadFrameworks = func() error {
 	return frameworksErr
 }
 
-func sel(name string) objc.SEL { return objc.RegisterName(name) }
+// The bridging helpers below delegate to github.com/go-macos/objc. They keep
+// the package's original names and signatures so api_darwin.go is unchanged;
+// because go-macos/objc's ID/SEL types are aliases of purego/objc's, the types
+// line up exactly.
 
-func class(name string) objc.ID { return objc.ID(objc.GetClass(name)) }
+func sel(name string) objc.SEL { return objc.Sel(name) }
+
+func class(name string) objc.ID { return objc.ClassID(name) }
 
 // nsString builds an autoreleased NSString from a Go string.
-func nsString(s string) objc.ID {
-	return class("NSString").Send(sel("stringWithUTF8String:"), s)
-}
-
-// objcGetCString fills buf with the NSString's UTF-8 bytes and reports success.
-// A seam over -getCString:maxLength:encoding: so goString's failure branch is
-// reachable from tests (the real call effectively never fails here, since buf
-// is sized from -lengthOfBytesUsingEncoding:).
-var objcGetCString = func(id objc.ID, buf []byte) bool {
-	return id.Send(sel("getCString:maxLength:encoding:"), unsafe.Pointer(&buf[0]), len(buf), nsUTF8Encoding) != 0
-}
+func nsString(s string) objc.ID { return objc.NSString(s) }
 
 // goString copies an NSString's UTF-8 bytes into a Go-owned buffer. Returns ""
 // for a nil id or an empty string.
-func goString(id objc.ID) string {
-	if id == 0 {
-		return ""
-	}
-	n := int(id.Send(sel("lengthOfBytesUsingEncoding:"), nsUTF8Encoding))
-	if n <= 0 {
-		return ""
-	}
-	buf := make([]byte, n+1)
-	if !objcGetCString(id, buf) {
-		return ""
-	}
-	return string(buf[:n])
-}
+func goString(id objc.ID) string { return objc.GoString(id) }
 
 // objcStringify renders any id as a Go string: NSStrings directly, anything
-// else through -description (so a non-string userInfo value degrades to its
-// textual form rather than crashing the getCString path).
-func objcStringify(v objc.ID) string {
-	if v == 0 {
-		return ""
-	}
-	if v.Send(sel("isKindOfClass:"), class("NSString")) != 0 {
-		return goString(v)
-	}
-	return goString(v.Send(sel("description")))
-}
+// else through -description.
+func objcStringify(v objc.ID) string { return objc.Stringify(v) }
 
-// dictToMap flattens an NSDictionary to map[string]string using objcStringify
-// for both keys and values.
-func dictToMap(dict objc.ID) map[string]string {
-	if dict == 0 {
-		return map[string]string{}
-	}
-	keys := dict.Send(sel("allKeys"))
-	n := int(keys.Send(sel("count")))
-	m := make(map[string]string, n)
-	for i := 0; i < n; i++ {
-		k := keys.Send(sel("objectAtIndex:"), i)
-		v := dict.Send(sel("objectForKey:"), k)
-		m[objcStringify(k)] = objcStringify(v)
-	}
-	return m
-}
+// dictToMap flattens an NSDictionary to map[string]string.
+func dictToMap(dict objc.ID) map[string]string { return objc.DictToMap(dict) }
 
-// mapToDict builds an autoreleased NSMutableDictionary of NSString→NSString.
-func mapToDict(m map[string]string) objc.ID {
-	dict := class("NSMutableDictionary").Send(sel("dictionary"))
-	for k, v := range m {
-		dict.Send(sel("setObject:forKey:"), nsString(v), nsString(k))
-	}
-	return dict
-}
+// mapToDict builds an autoreleased NSMutableDictionary of NSString->NSString.
+func mapToDict(m map[string]string) objc.ID { return objc.MapToDict(m) }

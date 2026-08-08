@@ -14,9 +14,10 @@ import (
 
 // These tests drive the OS-failure branches through the package's fake-injection
 // seams (loadFrameworks, dlopenFn, the notify(3) C-func vars, registerRunnerClass,
-// objcGetCString, and the user-notification center seams). Each swaps a seam,
-// exercises the branch, and restores it — the real on-device round-trips in
-// api_darwin_test.go are untouched.
+// and the user-notification center seams). Each swaps a seam, exercises the
+// branch, and restores it — the real on-device round-trips in api_darwin_test.go
+// are untouched. (The NSString getCString failure branch moved to the shared
+// github.com/go-macos/objc library, where it is covered.)
 
 // withLoadFrameworksErr swaps loadFrameworks to fail for the duration of fn.
 func withLoadFrameworksErr(fn func()) {
@@ -114,18 +115,6 @@ func TestSeam_RunRegisterClassFails(t *testing.T) {
 	registerRunnerClass = func() (objc.Class, error) { return 0, errors.New("no class") }
 	if err := Run(context.Background()); err == nil || err.Error() != "no class" {
 		t.Fatalf("Run registerRunnerClass err = %v", err)
-	}
-}
-
-func TestSeam_GoStringGetCStringFails(t *testing.T) {
-	if err := loadFrameworks(); err != nil {
-		t.Fatalf("loadFrameworks: %v", err)
-	}
-	orig := objcGetCString
-	defer func() { objcGetCString = orig }()
-	objcGetCString = func(objc.ID, []byte) bool { return false }
-	if got := goString(nsString("nonempty")); got != "" {
-		t.Fatalf("goString with failing getCString = %q, want empty", got)
 	}
 }
 

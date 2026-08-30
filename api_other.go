@@ -44,7 +44,9 @@ func PostDistributed(name string, userInfo map[string]string) error {
 	return ErrUnsupported
 }
 
-// PostUserNotification reports ErrUnsupported on non-darwin platforms.
+// PostUserNotification reports ErrUnsupported on non-darwin platforms. See the
+// darwin build for why github.com/go-macos/usernotifications is the package to
+// prefer for a user-facing notification.
 func PostUserNotification(title, subtitle, body string) error {
 	return ErrUnsupported
 }

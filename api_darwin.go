@@ -350,15 +350,33 @@ func patchCleanup(t Token, cleanup func()) {
 
 // PostUserNotification shows a user-facing banner via NSUserNotificationCenter.
 //
+// Prefer github.com/go-macos/usernotifications for anything user-facing. This
+// function stays, unchanged and supported, for code already inside an .app that
+// wants one line and no authorization flow — but it drives an API Apple
+// deprecated in macOS 11, and it can only post: no authorization, no sound, no
+// identifier, no way to read back or withdraw what was posted.
+//
 // Honest limitation: NSUserNotificationCenter is deprecated, and macOS only
 // displays the banner when the running process has a bundle identity (a proper
 // .app with an Info.plist / bundle identifier). Run from a bare CLI binary,
 // +defaultUserNotificationCenter typically returns nil — reported here as
 // [ErrNoUserCenter] — and even when it is non-nil the system may drop the
-// banner. The modern replacement, UNUserNotificationCenter, hard-requires a
-// bundled, signed app and an authorization prompt, so it is intentionally not
-// wrapped here. This function is a convenience for code already running inside
-// an .app bundle; it never shells out to osascript.
+// banner. It never shells out to osascript.
+//
+// The replacement is now wrapped. When this was written, the modern
+// UNUserNotificationCenter was left alone because its completion handlers are
+// Objective-C blocks, which this package's own documentation records as
+// impossible to synthesise under CGO_ENABLED=0 without hand-assembling the
+// block ABI. That stopped being true when github.com/go-macos/objc gained
+// NewBlock in v0.3.0, and github.com/go-macos/usernotifications binds the
+// framework properly on top of it.
+//
+// Two differences matter when choosing. UNUserNotificationCenter requires a
+// bundle identifier so strictly that asking for the centre without one throws
+// an Objective-C exception and ABORTS the process — where this function merely
+// returns [ErrNoUserCenter]. And it requires the user to grant authorization,
+// where this one asks nobody. That package guards the first and exposes the
+// second; both are the price of an API the system still supports.
 func PostUserNotification(title, subtitle, body string) error {
 	if err := loadFrameworks(); err != nil {
 		return err

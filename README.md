@@ -17,7 +17,7 @@ and never shells out to `osascript`. It is the macOS counterpart to the Linux
 | --- | --- | --- | --- | --- |
 | `Subscribe` / `Post` / `Cancel` | Darwin `notify(3)` | yes | none (named signal) | no |
 | `SubscribeDistributed` / `PostDistributed` | `NSDistributedNotificationCenter` | yes | `map[string]string` userInfo | subscribe: yes; post: no |
-| `PostUserNotification` | `NSUserNotificationCenter` | — | title/subtitle/body | no (best-effort, see below) |
+| `PostUserNotification` | `NSUserNotificationCenter` | — | title/subtitle/body | no (best-effort, **deprecated by the OS** — see below) |
 
 ```go
 // notify(3) event bus — subscribe to a system key, no run loop needed.
@@ -33,6 +33,46 @@ notify.SubscribeDistributed("com.example.event", func(ui map[string]string) {
 })
 notify.PostDistributed("com.example.event", map[string]string{"k": "v"})
 ```
+
+## Which package for a user-facing notification?
+
+**[`go-macos/usernotifications`](https://github.com/go-macos/usernotifications).**
+It binds `UNUserNotificationCenter`, the framework the system actually uses, and
+it is a sibling of this package — pure Go, `CGO_ENABLED=0`, through
+[`go-macos/objc`](https://github.com/go-macos/objc). It does what
+`PostUserNotification` here cannot: the authorization request, sounds,
+identifiers, reading back what the system is holding, and withdrawing a
+notification again.
+
+The division is by **kind**, and nothing in this package is superseded:
+
+| you want | reach for |
+| --- | --- |
+| a notification a person sees | [`go-macos/usernotifications`](https://github.com/go-macos/usernotifications) |
+| the Darwin `notify(3)` event bus | **this package** — `Subscribe` / `Post` |
+| `NSDistributedNotificationCenter` | **this package** — `SubscribeDistributed` / `PostDistributed` |
+
+The bottom two are not user-facing at all and have no counterpart in
+UserNotifications, so a program that needs both uses both.
+
+`PostUserNotification` stays here, unchanged and supported, for code already
+inside an `.app` that wants one line and no authorization flow.
+
+### Why it was not wrapped here, and what changed
+
+This package's design notes record that a dispatch **block** "cannot be
+synthesised under `CGO_ENABLED=0`", and every `UNUserNotificationCenter`
+completion handler is one — which is why the modern API was left alone. That
+stopped being true when `go-macos/objc` gained `NewBlock` in v0.3.0, and the new
+package binds the framework properly on top of it.
+
+Two differences are worth knowing before switching. `UNUserNotificationCenter`
+requires a bundle identifier so strictly that asking for the centre without one
+throws an Objective-C exception and **aborts the process**, where
+`PostUserNotification` merely returns `ErrNoUserCenter`; and it requires the
+user to **grant authorization**, where this one asks nobody. The new package
+guards the first and exposes the second. Both are the price of an API the system
+still supports.
 
 ## Design notes
 
@@ -54,9 +94,10 @@ notify.PostDistributed("com.example.event", map[string]string{"k": "v"})
 - **`PostUserNotification` is best-effort and deprecated-API-based.** macOS only
   shows the banner when the process has a bundle identity (a real `.app` with an
   `Info.plist`); from a bare CLI `+defaultUserNotificationCenter` usually returns
-  nil, reported as `ErrNoUserCenter`. The modern `UNUserNotificationCenter`
-  hard-requires a bundled, signed app plus an authorization prompt, so it is
-  intentionally not wrapped.
+  nil, reported as `ErrNoUserCenter`. The modern `UNUserNotificationCenter` is
+  now wrapped, in
+  [`go-macos/usernotifications`](https://github.com/go-macos/usernotifications)
+  — see [above](#which-package-for-a-user-facing-notification).
 
 ### Known limitation: mixing `notify(3)` and distributed in one process
 

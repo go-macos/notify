@@ -18,11 +18,34 @@
 //     no run loop.
 //
 //   - A best-effort user-facing banner via NSUserNotificationCenter
-//     ([PostUserNotification]). See that function for the honest bundle-identity
-//     limitation.
+//     ([PostUserNotification]). DEPRECATED BY THE OS; for anything user-facing
+//     reach for github.com/go-macos/usernotifications instead. See below, and
+//     see that function for the honest bundle-identity limitation.
 //
 // Every exported symbol is defined on all platforms so consumers cross-compile;
 // on non-darwin GOOS the functions return [ErrUnsupported].
+//
+// # Which package to use for a user-facing notification
+//
+// This one, only if you are already inside an .app and want one line of
+// best-effort banner from an API Apple deprecated in macOS 11.
+//
+// Otherwise github.com/go-macos/usernotifications, which binds
+// UNUserNotificationCenter — the framework the system actually uses. It is a
+// sibling of this package, built the same way (pure Go, CGO_ENABLED=0, through
+// github.com/go-macos/objc), and it handles what this package cannot: the
+// authorization request, sounds, identifiers, reading back what the system is
+// holding, and withdrawing a notification again.
+//
+// The division is by KIND, not by preference, and nothing here is superseded:
+//
+//   - user-facing notification -> go-macos/usernotifications
+//   - notify(3) event bus -> this package ([Subscribe], [Post])
+//   - NSDistributedNotificationCenter -> this package ([SubscribeDistributed],
+//     [PostDistributed])
+//
+// The two bottom rows are not user-facing at all and have no counterpart in
+// UserNotifications, so a program that needs both uses both.
 //
 // # notify(3): why a file descriptor, not a dispatch block
 //

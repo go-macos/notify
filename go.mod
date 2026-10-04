@@ -1,7 +1,8 @@
 module github.com/go-macos/notify
 
-go 1.26.4
+go 1.27.1
 
-require github.com/ebitengine/purego v0.11.1
-
-require github.com/go-macos/objc v0.10.2
+require (
+	github.com/ebitengine/purego v0.11.1
+	github.com/go-macos/objc v0.10.2
+)
